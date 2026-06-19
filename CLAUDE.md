@@ -12,7 +12,25 @@ don't touch /tmp/, use ./.tmp/
 
 ## Project Overview
 
-markdown-to-html is a Markdown-to-HTML compiler/converter.
+markdown-to-html is a Markdown-to-HTML compiler/converter written in Homun language (.hom) + Rust.
+
+**Tech stack**: Rust (Cargo project), Homun language (compiled via `homunc`)
+
+Key directories:
+```
+src/           — Source code (.hom + .rs)
+tests/         — Test suite
+_site/         — Documentation site
+```
+
+### Homun Build System
+
+`.hom` files are the source of truth, compiled at build time to `.rs` by `homunc`.
+
+- `build.rs` auto-discovers/downloads `homunc` and compiles `src/*.hom` → `target/OUT_DIR/*.rs`
+- Generated `.rs` files are NOT committed (they are build artifacts)
+- Bootstrap homunc: `build.rs` checks `.tmp/homunc`, then PATH, then downloads from GitHub releases
+- **Always update `Cargo.toml` version** when updating CHANGELOG.md (keep them in sync)
 
 ## Work Cycle
 

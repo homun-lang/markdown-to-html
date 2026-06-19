@@ -1,0 +1,29 @@
+[package]
+name = "markdown-to-html"
+version = "0.1.0"
+edition = "2024"
+description = "Markdown to HTML compiler using Homun language"
+authors = []
+
+[[bin]]
+name = "markdown-to-html"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[lib]
+name = "markdown_to_html"
+path = "src/lib.rs"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = ["cli"]
+cli = ["clap"]
+wasm = ["wasm-bindgen"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+
+[profile.release]
+opt-level = "s"
+lto = true

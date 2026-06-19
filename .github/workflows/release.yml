@@ -2,7 +2,7 @@ name: Build and Release
 
 on:
   workflow_run:
-    workflows: ["Test"]
+    workflows: ["auto Test"]
     types:
       - completed
 
@@ -22,15 +22,12 @@ jobs:
           - target: x86_64-unknown-linux-gnu
             artifact: markdown-to-html-linux-x86_64
             binary: markdown-to-html
-            ext: ""
           - target: aarch64-unknown-linux-gnu
             artifact: markdown-to-html-linux-aarch64
             binary: markdown-to-html
-            ext: ""
           - target: x86_64-pc-windows-gnu
-            artifact: markdown-to-html-windows-x86_64
+            artifact: markdown-to-html-windows-x86_64.exe
             binary: markdown-to-html.exe
-            ext: ".exe"
 
     steps:
       - name: Checkout
@@ -49,17 +46,47 @@ jobs:
             --output type=local,dest=./out .
 
       - name: Rename binary
-        run: mv out/${{ matrix.binary }} "${{ matrix.artifact }}${{ matrix.ext }}"
+        run: mv out/${{ matrix.binary }} ${{ matrix.artifact }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.artifact }}${{ matrix.ext }}
-          path: ${{ matrix.artifact }}${{ matrix.ext }}
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+
+  build-wasm:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      startsWith(github.event.workflow_run.head_branch, 'v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}
+          submodules: recursive
+
+      - name: Build WASM with Docker
+        run: |
+          docker buildx build \
+            -f Dockerfile.wasm \
+            --build-arg VERSION=${{ github.event.workflow_run.head_branch }} \
+            --cache-from type=gha \
+            --cache-to type=gha,mode=max \
+            --output type=local,dest=./out .
+
+      - name: Package WASM
+        run: tar czf markdown-to-html-wasm.tar.gz -C out .
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: markdown-to-html-wasm.tar.gz
+          path: markdown-to-html-wasm.tar.gz
 
   release:
     runs-on: ubuntu-latest
-    needs: [build]
+    needs: [build, build-wasm]
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4

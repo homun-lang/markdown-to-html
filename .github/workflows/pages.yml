@@ -31,6 +31,11 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Download released WASM
+        run: |
+          wget -q https://github.com/HomunMage/markdown-to-html/releases/latest/download/markdown-to-html-wasm.tar.gz
+          tar xzf markdown-to-html-wasm.tar.gz -C _site/
+
       - name: Setup Pages
         uses: actions/configure-pages@v5
 

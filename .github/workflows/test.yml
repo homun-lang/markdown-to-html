@@ -1,0 +1,21 @@
+name: Test
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Test with Docker
+        run: |
+          docker buildx build \
+            -f Dockerfile.test \
+            --build-arg VERSION=${{ github.ref_name }} \
+            .

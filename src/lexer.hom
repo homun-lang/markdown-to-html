@@ -32,18 +32,63 @@ is_hr := (line: str) -> bool {
   count >= 3
 }
 
+// Extract the tag name from a line that begins with "<letter...".
+html_tag_name := (line: str) -> str {
+  i ::= 1
+  buf ::= @[]
+  done ::= false
+  while (i < len(line) and not done) {
+    ch := char_at(line, i)
+    if (is_alnum(ch)) { buf ::= buf + @[ch]  i ::= i + 1 }
+    else { done ::= true }
+  }
+  join(buf, "")
+}
+
+// True for block-level HTML tags that may span multiple lines.
+is_block_html_tag := (tag: str) -> bool {
+  t := to_lower(tag)
+  t == "div" or t == "section" or t == "article" or t == "header" or
+  t == "footer" or t == "nav" or t == "aside" or t == "main" or
+  t == "table" or t == "form" or t == "fieldset" or t == "details" or
+  t == "dialog" or t == "figure" or t == "pre" or t == "blockquote" or
+  t == "ul" or t == "ol" or t == "dl" or t == "p" or
+  t == "h1" or t == "h2" or t == "h3" or t == "h4" or t == "h5" or t == "h6"
+}
+
+// Void HTML tags never have a closing tag, so they stay single-line.
+is_void_html_tag := (tag: str) -> bool {
+  t := to_lower(tag)
+  t == "hr" or t == "br" or t == "img" or t == "input" or t == "meta" or
+  t == "link" or t == "area" or t == "base" or t == "col" or t == "embed" or
+  t == "source" or t == "track" or t == "wbr"
+}
+
 // Scan raw markdown text line-by-line into block-level tokens.
 tokenize := (input: str) -> @[Token] {
   tokens ::= @[]
   in_code ::= false
+  in_html ::= false
+  html_tag ::= str("")
   for line in lines(input) {
     // Inside a fenced code block: lines are opaque until the closing fence.
+    // Code fence state takes priority over HTML block state.
     if (in_code) {
       if (starts_with(line, "```")) {
         tokens ::= tokens + @[Token.CodeFence("")]
         in_code ::= false
       } else {
         tokens ::= tokens + @[Token.CodeLine(line)]
+      }
+      continue
+    }
+
+    // Inside a multi-line HTML block: emit lines verbatim until the close tag.
+    if (in_html) {
+      tokens ::= tokens + @[Token.HtmlBlock(line)]
+      if (contains(to_lower(line), "</${html_tag}>")) {
+        in_html ::= false
+        html_tag ::= str("")
       }
       continue
     }
@@ -105,6 +150,19 @@ tokenize := (input: str) -> @[Token] {
       second := char_at(line, 1)
       if (second == "/" or is_alpha(second)) {
         tokens ::= tokens + @[Token.HtmlBlock(line)]
+        // Enter multi-line mode for a block-level opening tag whose matching
+        // closing tag is not present on this same line.
+        if (is_alpha(second)) {
+          tag := to_lower(html_tag_name(line))
+          t := trim(line)
+          self_close := len(t) >= 2 and substr(t, len(t) - 2, len(t)) == "/>"
+          has_close := contains(to_lower(line), "</${tag}>")
+          if (is_block_html_tag(tag) and not is_void_html_tag(tag) and
+              not self_close and not has_close) {
+            in_html ::= true
+            html_tag ::= tag
+          }
+        }
         continue
       }
     }

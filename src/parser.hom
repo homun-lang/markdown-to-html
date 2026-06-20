@@ -74,7 +74,9 @@ parse_blocks := (tokens: @[Token]) -> @[Block] {
             _ -> { more ::= false }
           }
         }
-        blocks ::= blocks + @[Block.Paragraph(@[Inline.Text(join(parts, " "))])]
+        // Join with "\n" (not " ") so table.hom can recover row boundaries.
+        // Inside a <p> the newline collapses to a space, so HTML is unchanged.
+        blocks ::= blocks + @[Block.Paragraph(@[Inline.Text(join(parts, "\n"))])]
       }
 
       // Fence opens a code block; gather code lines until the closing fence.

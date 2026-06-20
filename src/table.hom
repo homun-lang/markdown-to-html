@@ -1,0 +1,235 @@
+use std
+use types
+
+// table.hom — table parser. Runs LAST, after inline parsing has already turned
+// code, HTML, bold, etc. into opaque Inline nodes. The core design rule of this
+// compiler is that table "|" is the very last thing parsed: a "|" living inside
+// an Inline.Code or Inline.Html node is part of that node, never a delimiter.
+// Only a bare "|" in a top-level Inline.Text segment splits cells.
+
+// True if `c` is inline whitespace (space or tab).
+is_ws := (c: str) -> bool { c == " " or c == "\t" }
+
+// Strip leading inline whitespace.
+ltrim := (s: str) -> str {
+  i ::= 0
+  n := len(s)
+  while (i < n and is_ws(char_at(s, i))) { i ::= i + 1 }
+  substr(s, i, n)
+}
+
+// Strip trailing inline whitespace.
+rtrim := (s: str) -> str {
+  n ::= len(s)
+  while (n > 0 and is_ws(char_at(s, n - 1))) { n ::= n - 1 }
+  substr(s, 0, n)
+}
+
+// Split an inline-node list into segments at every occurrence of single-char
+// `delim` that appears INSIDE a top-level Inline.Text node. Non-text nodes
+// (Code, Html, Bold, ...) are opaque and always stay within the current segment,
+// so a "|" or newline buried in them never causes a split.
+split_inlines_by := (inlines: @[Inline], delim: str) -> @[@[Inline]] {
+  segments ::= @[]
+  cur ::= @[]
+  buf ::= @[]
+  for node in inlines {
+    match node {
+      Inline.Text(s) -> {
+        i ::= 0
+        n := len(s)
+        while (i < n) {
+          c := char_at(s, i)
+          if (c == delim) {
+            if (len(buf) > 0) { cur ::= cur + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+            segments ::= segments + @[cur]
+            cur ::= @[]
+          } else {
+            buf ::= buf + @[c]
+          }
+          i ::= i + 1
+        }
+        if (len(buf) > 0) { cur ::= cur + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+      }
+      _ -> { cur ::= cur + @[node] }
+    }
+  }
+  segments ::= segments + @[cur]
+  segments
+}
+
+// Concatenate only the top-level Inline.Text content of a segment. Used for
+// separator detection and alignment parsing (both look at plain text only).
+inline_text := (seg: @[Inline]) -> str {
+  parts ::= @[]
+  for node in seg {
+    match node {
+      Inline.Text(s) -> { parts ::= parts + @[s] }
+      _ -> {}
+    }
+  }
+  join(parts, "")
+}
+
+// A segment is empty if it holds no nodes or only whitespace-only text.
+seg_is_empty := (seg: @[Inline]) -> bool {
+  for node in seg {
+    match node {
+      Inline.Text(s) -> { if (len(trim(s)) > 0) { => false } }
+      _ -> { => false }
+    }
+  }
+  true
+}
+
+// Drop the first segment.
+drop_first := (xs: @[@[Inline]]) -> @[@[Inline]] {
+  out ::= @[]
+  i ::= 1
+  while (i < len(xs)) { out ::= out + @[xs[i]]   i ::= i + 1 }
+  out
+}
+
+// Drop the last segment.
+drop_last := (xs: @[@[Inline]]) -> @[@[Inline]] {
+  out ::= @[]
+  n := len(xs) - 1
+  i ::= 0
+  while (i < n) { out ::= out + @[xs[i]]   i ::= i + 1 }
+  out
+}
+
+// Split one table row into cells: split on top-level "|", then discard the
+// empty edge segments produced by leading/trailing pipes. A "| a | b |" row
+// yields exactly [a, b]; a borderless "a | b" row also yields [a, b].
+split_cells := (row: @[Inline]) -> @[@[Inline]] {
+  cells ::= split_inlines_by(row, "|")
+  if (len(cells) > 0 and seg_is_empty(cells[0])) { cells ::= drop_first(cells) }
+  if (len(cells) > 0 and seg_is_empty(cells[len(cells) - 1])) { cells ::= drop_last(cells) }
+  cells
+}
+
+// Trim whitespace off a cell's boundary text nodes and drop nodes left empty.
+trim_cell := (seg: @[Inline]) -> @[Inline] {
+  m := len(seg)
+  out ::= @[]
+  i ::= 0
+  while (i < m) {
+    node := seg[i]
+    keep ::= node
+    skip ::= false
+    match node {
+      Inline.Text(s) -> {
+        s2 ::= s
+        if (i == 0) { s2 ::= ltrim(s2) }
+        if (i == m - 1) { s2 ::= rtrim(s2) }
+        if (len(s2) == 0) { skip ::= true } else { keep ::= Inline.Text(s2) }
+      }
+      _ -> {}
+    }
+    if (not skip) { out ::= out + @[keep] }
+    i ::= i + 1
+  }
+  out
+}
+
+// True if `t` is a separator cell: only '-' and ':' (after trimming) with at
+// least one '-'. Examples: ---, :---, ---:, :---:
+is_separator_text := (t: str) -> bool {
+  s := trim(t)
+  if (len(s) == 0) { => false }
+  has_dash ::= false
+  i ::= 0
+  n := len(s)
+  while (i < n) {
+    c := char_at(s, i)
+    if (c == "-") { has_dash ::= true }
+    else { if (c != ":") { => false } }
+    i ::= i + 1
+  }
+  has_dash
+}
+
+// True if a row's plain text contains a top-level "|".
+row_has_pipe := (row: @[Inline]) -> bool {
+  for node in row {
+    match node {
+      Inline.Text(s) -> { if (contains(s, "|")) { => true } }
+      _ -> {}
+    }
+  }
+  false
+}
+
+// True if every cell of `row` is a separator cell (and there is at least one).
+row_is_separator := (row: @[Inline]) -> bool {
+  cells := split_cells(row)
+  if (len(cells) == 0) { => false }
+  ok ::= true
+  for cell in cells {
+    if (not is_separator_text(inline_text(cell))) { ok ::= false }
+  }
+  ok
+}
+
+// Alignment of a separator cell: ":---:" center, "---:" right, else left.
+parse_alignment := (sep_text: str) -> str {
+  s := trim(sep_text)
+  n := len(s)
+  if (n == 0) { => str("left") }
+  left := char_at(s, 0) == ":"
+  right := char_at(s, n - 1) == ":"
+  if (left and right) { "center" } else { if (right) { "right" } else { "left" } }
+}
+
+// Build a TableRow from a raw row's inline nodes.
+make_row := (row: @[Inline]) -> TableRow {
+  cells := split_cells(row)
+  trimmed ::= @[]
+  for c in cells { trimmed ::= trimmed + @[trim_cell(c)] }
+  TableRow { cells: trimmed }
+}
+
+// A run of rows is a table when there are >= 2 rows, the first carries a pipe,
+// and the second is a separator line.
+is_table := (rows: @[@[Inline]]) -> bool {
+  if (len(rows) < 2) { => false }
+  if (not row_has_pipe(rows[0])) { => false }
+  row_is_separator(rows[1])
+}
+
+// Construct the Table block: row 0 is the header, row 1 (separator) is consumed
+// for alignment, rows 2+ are the body. Empty trailing rows are skipped.
+build_table := (rows: @[@[Inline]]) -> Block {
+  sep_cells := split_cells(rows[1])
+  aligns ::= @[]
+  for c in sep_cells { aligns ::= aligns + @[parse_alignment(inline_text(c))] }
+  trows ::= @[make_row(rows[0])]
+  i ::= 2
+  while (i < len(rows)) {
+    if (not seg_is_empty(rows[i])) { trows ::= trows + @[make_row(rows[i])] }
+    i ::= i + 1
+  }
+  Block.Table(trows, aligns)
+}
+
+// Scan blocks; replace any Paragraph whose lines form a table with a Table block.
+// Recurses into blockquotes so tables nested in quotes are detected too.
+parse_tables := (blocks: @[Block]) -> @[Block] {
+  out ::= @[]
+  for b in blocks {
+    match b {
+      Block.Paragraph(inls) -> {
+        rows := split_inlines_by(inls, "\n")
+        if (is_table(rows)) {
+          out ::= out + @[build_table(rows)]
+        } else {
+          out ::= out + @[Block.Paragraph(inls)]
+        }
+      }
+      Block.Blockquote(inner) -> { out ::= out + @[Block.Blockquote(parse_tables(inner))] }
+      _ -> { out ::= out + @[b] }
+    }
+  }
+  out
+}

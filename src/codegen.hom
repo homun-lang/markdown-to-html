@@ -1,0 +1,125 @@
+use std
+
+html_escape := (s: str) -> str {
+  s | replace("&", "&amp;") | replace("<", "&lt;") | replace(">", "&gt;")
+}
+
+render_inline := (node: Inline) -> str {
+  match node {
+    Inline.Text(t) -> { html_escape(t) }
+    Inline.Bold(children) -> { "<strong>${render_inlines(children)}</strong>" }
+    Inline.Italic(children) -> { "<em>${render_inlines(children)}</em>" }
+    Inline.BoldItalic(children) -> { "<strong><em>${render_inlines(children)}</em></strong>" }
+    Inline.Strikethrough(children) -> { "<del>${render_inlines(children)}</del>" }
+    Inline.Code(c) -> { "<code>${html_escape(c)}</code>" }
+    Inline.Link(url, children) -> { "<a href=\"${url}\">${render_inlines(children)}</a>" }
+    Inline.Image(alt, src) -> { "<img src=\"${src}\" alt=\"${alt}\">" }
+    Inline.Html(h) -> { h }
+    Inline.LineBreak -> { "<br>" }
+  }
+}
+
+render_inlines := (nodes: @[Inline]) -> str {
+  result ::= str("")
+  for node in nodes {
+    result ::= "${result}${render_inline(node)}"
+  }
+  result
+}
+
+render_blocks_inline := (blocks: @[Block]) -> str {
+  if (len(blocks) == 0) { => str("") }
+  result ::= str("")
+  for b in blocks {
+    match b {
+      Block.Paragraph(inls) -> { result ::= "${result}${render_inlines(inls)}" }
+      _ -> { result ::= "${result}\n${render_block(b)}" }
+    }
+  }
+  result
+}
+
+render_table := (rows: @[TableRow], aligns: @[str]) -> str {
+  result ::= str("<table>\n")
+  i ::= 0
+  for row in rows {
+    if (i == 0) {
+      result ::= "${result}<thead>\n<tr>"
+      j ::= 0
+      for cell in row.cells {
+        content := render_inlines(cell)
+        if (j < len(aligns) and aligns[j] != "default") {
+          a := aligns[j]
+          result ::= "${result}<th style=\"text-align:${a}\">${content}</th>"
+        } else {
+          result ::= "${result}<th>${content}</th>"
+        }
+        j ::= j + 1
+      }
+      result ::= "${result}</tr>\n</thead>\n<tbody>\n"
+    } else {
+      result ::= "${result}<tr>"
+      j ::= 0
+      for cell in row.cells {
+        content := render_inlines(cell)
+        if (j < len(aligns) and aligns[j] != "default") {
+          a := aligns[j]
+          result ::= "${result}<td style=\"text-align:${a}\">${content}</td>"
+        } else {
+          result ::= "${result}<td>${content}</td>"
+        }
+        j ::= j + 1
+      }
+      result ::= "${result}</tr>\n"
+    }
+    i ::= i + 1
+  }
+  "${result}</tbody>\n</table>\n"
+}
+
+render_block := (block: Block) -> str {
+  match block {
+    Block.Heading(level, inlines) -> {
+      "<h${level}>${render_inlines(inlines)}</h${level}>\n"
+    }
+    Block.Paragraph(inlines) -> {
+      "<p>${render_inlines(inlines)}</p>\n"
+    }
+    Block.CodeBlock(lang, content) -> {
+      escaped := html_escape(content)
+      if (len(lang) > 0) {
+        "<pre><code class=\"language-${lang}\">${escaped}\n</code></pre>\n"
+      } else {
+        "<pre><code>${escaped}\n</code></pre>\n"
+      }
+    }
+    Block.Blockquote(children) -> {
+      "<blockquote>\n${render_html(children)}</blockquote>\n"
+    }
+    Block.UnorderedList(items) -> {
+      result ::= str("<ul>\n")
+      for item in items {
+        result ::= "${result}<li>${render_blocks_inline(item)}</li>\n"
+      }
+      "${result}</ul>\n"
+    }
+    Block.OrderedList(items) -> {
+      result ::= str("<ol>\n")
+      for item in items {
+        result ::= "${result}<li>${render_blocks_inline(item)}</li>\n"
+      }
+      "${result}</ol>\n"
+    }
+    Block.HorizontalRule -> { "<hr>\n" }
+    Block.HtmlBlock(html) -> { "${html}\n" }
+    Block.Table(rows, aligns) -> { render_table(rows, aligns) }
+  }
+}
+
+render_html := (blocks: @[Block]) -> str {
+  result ::= str("")
+  for block in blocks {
+    result ::= "${result}${render_block(block)}"
+  }
+  result
+}

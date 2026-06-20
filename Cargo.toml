@@ -22,6 +22,7 @@ wasm = ["wasm-bindgen"]
 
 [dependencies]
 clap = { version = "4", features = ["derive"], optional = true }
+regex = "1"
 wasm-bindgen = { version = "0.2", optional = true }
 
 [[test]]

@@ -1,5 +1,4 @@
 use std
-use types
 
 // Wrap a list's items into the appropriate Block variant.
 make_list_block := (items: @[@[Block]], ordered: bool) -> Block {

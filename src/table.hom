@@ -1,5 +1,4 @@
 use std
-use types
 
 // table.hom — table parser. Runs LAST, after inline parsing has already turned
 // code, HTML, bold, etc. into opaque Inline nodes. The core design rule of this
@@ -179,7 +178,7 @@ parse_alignment := (sep_text: str) -> str {
   if (n == 0) { => str("left") }
   left := char_at(s, 0) == ":"
   right := char_at(s, n - 1) == ":"
-  if (left and right) { "center" } else { if (right) { "right" } else { "left" } }
+  if (left and right) { "center" } else { if (right) { "right" } else { if (left) { "left" } else { "default" } } }
 }
 
 // Build a TableRow from a raw row's inline nodes.

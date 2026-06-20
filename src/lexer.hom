@@ -1,0 +1,116 @@
+use std
+use chars
+
+// Count how many leading characters of `s` equal `ch`.
+count_char_prefix := (s: str, ch: str) -> int {
+  n ::= 0
+  while (n < len(s) and char_at(s, n) == ch) { n ::= n + 1 }
+  n
+}
+
+// Count leading ASCII digits of `s`.
+count_digit_prefix := (s: str) -> int {
+  n ::= 0
+  while (n < len(s) and is_digit(char_at(s, n))) { n ::= n + 1 }
+  n
+}
+
+// True if the line is a horizontal rule: 3+ of one of -,*,_ plus optional spaces.
+is_hr := (line: str) -> bool {
+  t := trim(line)
+  if (len(t) < 3) { => false }
+  c0 := char_at(t, 0)
+  if (c0 != "-" and c0 != "*" and c0 != "_") { => false }
+  i ::= 0
+  count ::= 0
+  while (i < len(t)) {
+    ch := char_at(t, i)
+    if (ch == c0) { count ::= count + 1 }
+    else { if (ch != " ") { => false } }
+    i ::= i + 1
+  }
+  count >= 3
+}
+
+// Scan raw markdown text line-by-line into block-level tokens.
+tokenize := (input: str) -> @[Token] {
+  tokens ::= @[]
+  in_code ::= false
+  for line in lines(input) {
+    // Inside a fenced code block: lines are opaque until the closing fence.
+    if (in_code) {
+      if (starts_with(line, "```")) {
+        tokens ::= tokens + @[Token.CodeFence("")]
+        in_code ::= false
+      } else {
+        tokens ::= tokens + @[Token.CodeLine(line)]
+      }
+      continue
+    }
+
+    // Opening code fence (optional language tag after the backticks).
+    if (starts_with(line, "```")) {
+      lang := trim(substr(line, 3, len(line)))
+      tokens ::= tokens + @[Token.CodeFence(lang)]
+      in_code ::= true
+      continue
+    }
+
+    // Blank line (paragraph separator).
+    if (trim(line) == "") {
+      tokens ::= tokens + @[Token.BlankLine]
+      continue
+    }
+
+    // Heading: 1-6 '#' followed by a space.
+    hcount := count_char_prefix(line, "#")
+    if (hcount >= 1 and hcount <= 6 and len(line) > hcount and char_at(line, hcount) == " ") {
+      text := trim(substr(line, hcount, len(line)))
+      tokens ::= tokens + @[Token.Heading(hcount, text)]
+      continue
+    }
+
+    // Horizontal rule.
+    if (is_hr(line)) {
+      tokens ::= tokens + @[Token.HorizontalRule]
+      continue
+    }
+
+    // Blockquote: '>' with an optional following space.
+    if (starts_with(line, ">")) {
+      rest ::= substr(line, 1, len(line))
+      if (len(rest) > 0 and char_at(rest, 0) == " ") { rest ::= substr(rest, 1, len(rest)) }
+      tokens ::= tokens + @[Token.BlockquoteLine(rest)]
+      continue
+    }
+
+    // List items: leading spaces (indent), then "- ", "* ", or "N. ".
+    spaces := count_char_prefix(line, " ")
+    rest := substr(line, spaces, len(line))
+    indent := spaces / 2
+    if (starts_with(rest, "- ") or starts_with(rest, "* ")) {
+      content := substr(rest, 2, len(rest))
+      tokens ::= tokens + @[Token.ListItem(indent, content, false)]
+      continue
+    }
+    nd := count_digit_prefix(rest)
+    if (nd > 0 and starts_with(substr(rest, nd, len(rest)), ". ")) {
+      content := substr(rest, nd + 2, len(rest))
+      tokens ::= tokens + @[Token.ListItem(indent, content, true)]
+      continue
+    }
+
+    // HTML block: '<' followed by a letter (opening tag) or '/' (closing tag).
+    if (starts_with(line, "<") and len(line) > 1) {
+      second := char_at(line, 1)
+      if (second == "/" or is_alpha(second)) {
+        tokens ::= tokens + @[Token.HtmlBlock(line)]
+        continue
+      }
+    }
+
+    // Everything else: plain text line.
+    tokens ::= tokens + @[Token.Text(line)]
+  }
+  tokens
+}

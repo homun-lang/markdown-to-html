@@ -1,0 +1,45 @@
+use std
+
+// Block-level token from lexer
+Token := enum {
+  Heading(int, str),        // level (1-6), raw text content
+  Text(str),                // plain text line
+  BlankLine,                // empty line (paragraph separator)
+  CodeFence(str),           // ``` with optional language tag
+  CodeLine(str),            // line inside a fenced code block
+  BlockquoteLine(str),      // > prefixed line (prefix stripped)
+  ListItem(int, str, bool), // indent_level, content, is_ordered
+  HorizontalRule,           // --- or *** or ___
+  HtmlBlock(str)            // raw HTML line
+}
+
+// Inline formatting node
+Inline := enum {
+  Text(str),
+  Bold(@[Inline]),
+  Italic(@[Inline]),
+  BoldItalic(@[Inline]),
+  Strikethrough(@[Inline]),
+  Code(str),
+  Link(str, @[Inline]),     // url, children
+  Image(str, str),          // alt, src
+  Html(str),                // raw HTML passthrough
+  LineBreak
+}
+
+// Block-level AST node
+Block := enum {
+  Heading(int, @[Inline]),
+  Paragraph(@[Inline]),
+  CodeBlock(str, str),      // language, content
+  Blockquote(@[Block]),
+  UnorderedList(@[@[Block]]),
+  OrderedList(@[@[Block]]),
+  HorizontalRule,
+  HtmlBlock(str),
+  Table(@[TableRow], @[str])  // rows, alignments
+}
+
+TableRow := struct {
+  cells: @[@[Inline]]
+}

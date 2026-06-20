@@ -1,0 +1,136 @@
+use std
+use types
+
+// Wrap a list's items into the appropriate Block variant.
+make_list_block := (items: @[@[Block]], ordered: bool) -> Block {
+  if (ordered) { Block.OrderedList(items) } else { Block.UnorderedList(items) }
+}
+
+// Consume consecutive ListItem tokens at `base_indent`, nesting deeper-indented
+// items into the previous item. Returns (items, ordered, next_index).
+parse_list := (tokens: @[Token], start: int, base_indent: int) -> (@[@[Block]], bool, int) {
+  items ::= @[]
+  ordered ::= false
+  seen ::= false
+  i ::= start
+  n := len(tokens)
+  going ::= true
+  while (i < n and going) {
+    match tokens[i] {
+      Token.ListItem(indent, content, is_ord) -> {
+        if (indent < base_indent) {
+          // Belongs to an outer list — stop without consuming.
+          going ::= false
+        } else {
+          if (indent > base_indent and len(items) > 0) {
+            // Deeper indent: parse a nested list and attach to the last item.
+            sub_items, sub_ordered, ni := parse_list(tokens, i, indent)
+            nested := make_list_block(sub_items, sub_ordered)
+            last := len(items) - 1
+            items[last] := items[last] + @[nested]
+            i ::= ni
+          } else {
+            if (not seen) { ordered ::= is_ord   seen ::= true }
+            items ::= items + @[@[Block.Paragraph(@[Inline.Text(content)])]]
+            i ::= i + 1
+          }
+        }
+      }
+      _ -> { going ::= false }
+    }
+  }
+  (items, ordered, i)
+}
+
+// Walk the token list and group tokens into block-level AST nodes. Text content
+// stays as raw Inline.Text here; inline.hom refines it in a later pass.
+parse_blocks := (tokens: @[Token]) -> @[Block] {
+  blocks ::= @[]
+  i ::= 0
+  n := len(tokens)
+  while (i < n) {
+    match tokens[i] {
+      // Blank lines are paragraph separators only.
+      Token.BlankLine -> { i ::= i + 1 }
+
+      Token.HorizontalRule -> {
+        blocks ::= blocks + @[Block.HorizontalRule]
+        i ::= i + 1
+      }
+
+      Token.Heading(level, text) -> {
+        blocks ::= blocks + @[Block.Heading(level, @[Inline.Text(text)])]
+        i ::= i + 1
+      }
+
+      // Consecutive text lines merge into one paragraph (joined by spaces).
+      Token.Text(t) -> {
+        parts ::= @[t]
+        i ::= i + 1
+        more ::= true
+        while (i < n and more) {
+          match tokens[i] {
+            Token.Text(t2) -> { parts ::= parts + @[t2]   i ::= i + 1 }
+            _ -> { more ::= false }
+          }
+        }
+        blocks ::= blocks + @[Block.Paragraph(@[Inline.Text(join(parts, " "))])]
+      }
+
+      // Fence opens a code block; gather code lines until the closing fence.
+      Token.CodeFence(lang) -> {
+        i ::= i + 1
+        code_lines ::= @[]
+        more ::= true
+        while (i < n and more) {
+          match tokens[i] {
+            Token.CodeLine(cl) -> { code_lines ::= code_lines + @[cl]   i ::= i + 1 }
+            Token.CodeFence(_) -> { i ::= i + 1   more ::= false }
+            _ -> { more ::= false }
+          }
+        }
+        blocks ::= blocks + @[Block.CodeBlock(lang, join(code_lines, "\n"))]
+      }
+
+      // Blockquote: gather lines, re-tokenize the inner content, parse recursively.
+      Token.BlockquoteLine(bq) -> {
+        bq_lines ::= @[bq]
+        i ::= i + 1
+        more ::= true
+        while (i < n and more) {
+          match tokens[i] {
+            Token.BlockquoteLine(bq2) -> { bq_lines ::= bq_lines + @[bq2]   i ::= i + 1 }
+            _ -> { more ::= false }
+          }
+        }
+        inner := parse_blocks(tokenize(join(bq_lines, "\n")))
+        blocks ::= blocks + @[Block.Blockquote(inner)]
+      }
+
+      // Lists: hand off to parse_list for grouping and nesting.
+      Token.ListItem(indent, _, _) -> {
+        lst_items, lst_ordered, ni := parse_list(tokens, i, indent)
+        blocks ::= blocks + @[make_list_block(lst_items, lst_ordered)]
+        i ::= ni
+      }
+
+      // Consecutive raw HTML lines merge; content is never parsed.
+      Token.HtmlBlock(h) -> {
+        h_lines ::= @[h]
+        i ::= i + 1
+        more ::= true
+        while (i < n and more) {
+          match tokens[i] {
+            Token.HtmlBlock(h2) -> { h_lines ::= h_lines + @[h2]   i ::= i + 1 }
+            _ -> { more ::= false }
+          }
+        }
+        blocks ::= blocks + @[Block.HtmlBlock(join(h_lines, "\n"))]
+      }
+
+      // Stray code line outside any fence — drop it.
+      Token.CodeLine(_) -> { i ::= i + 1 }
+    }
+  }
+  blocks
+}

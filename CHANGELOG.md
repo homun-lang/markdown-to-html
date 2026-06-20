@@ -1,5 +1,9 @@
 # Changelog
 
+## v0.3 — 2026-06-20
+
+- Multiple blank lines in markdown emit `<br>` for extra line breaks in HTML output
+
 ## v0.2 — 2026-06-20
 
 - Implement full markdown-to-html compiler in Homun language (.hom)

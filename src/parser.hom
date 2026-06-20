@@ -49,8 +49,22 @@ parse_blocks := (tokens: @[Token]) -> @[Block] {
   n := len(tokens)
   while (i < n) {
     match tokens[i] {
-      // Blank lines are paragraph separators only.
-      Token.BlankLine -> { i ::= i + 1 }
+      Token.BlankLine -> {
+        count ::= 1
+        i ::= i + 1
+        scanning ::= true
+        while (i < n and scanning) {
+          match tokens[i] {
+            Token.BlankLine -> { count ::= count + 1   i ::= i + 1 }
+            _ -> { scanning ::= false }
+          }
+        }
+        j ::= 1
+        while (j < count) {
+          blocks ::= blocks + @[Block.HtmlBlock("<br>")]
+          j ::= j + 1
+        }
+      }
 
       Token.HorizontalRule -> {
         blocks ::= blocks + @[Block.HorizontalRule]

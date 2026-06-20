@@ -1,0 +1,209 @@
+use std
+use chars
+
+// True if `ch` loses its special meaning when preceded by a backslash.
+is_special_char := (ch: str) -> bool {
+  ch == "\\" or ch == "`" or ch == "*" or ch == "_" or ch == "~"
+    or ch == "[" or ch == "]" or ch == "(" or ch == ")"
+    or ch == "|" or ch == "<" or ch == ">"
+}
+
+// Index of the first occurrence of `sub` in `text` at or after `start`, or -1.
+find_from := (text: str, sub: str, start: int) -> int {
+  i ::= start
+  n := len(text)
+  m := len(sub)
+  while (i + m <= n) {
+    if (substr(text, i, i + m) == sub) { => i }
+    i ::= i + 1
+  }
+  0 - 1
+}
+
+// Parse a raw text string into a list of inline nodes (left-to-right scan).
+parse_inline := (text: str) -> @[Inline] {
+  nodes ::= @[]
+  buf ::= @[]
+  i ::= 0
+  n := len(text)
+  while (i < n) {
+    c := char_at(text, i)
+
+    // 1. Escaped char: backslash strips special meaning of the next char.
+    if (c == "\\" and i + 1 < n) {
+      nxt := char_at(text, i + 1)
+      if (is_special_char(nxt)) {
+        buf ::= buf + @[nxt]
+        i ::= i + 2
+        continue
+      }
+    }
+
+    // 2. Inline code: opaque, no parsing inside backticks.
+    if (c == "`") {
+      close := find_from(text, "`", i + 1)
+      if (close >= 0) {
+        if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+        nodes ::= nodes + @[Inline.Code(substr(text, i + 1, close))]
+        i ::= close + 1
+        continue
+      }
+    }
+
+    // 3. Inline HTML: opaque passthrough. A closing tag or self-closing tag
+    // consumes just to its ">"; an opening tag consumes through its matching
+    // close tag so the element content is never parsed.
+    if (c == "<" and i + 1 < n) {
+      nxt := char_at(text, i + 1)
+      if (nxt == "/" or is_alpha(nxt)) {
+        gt := find_from(text, ">", i + 1)
+        if (gt >= 0) {
+          if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+          self_close := gt >= 1 and char_at(text, gt - 1) == "/"
+          if (nxt == "/" or self_close) {
+            nodes ::= nodes + @[Inline.Html(substr(text, i, gt + 1))]
+            i ::= gt + 1
+          } else {
+            name_end ::= i + 1
+            while (name_end < n and is_alnum(char_at(text, name_end))) { name_end ::= name_end + 1 }
+            tag := substr(text, i + 1, name_end)
+            closer := join(@[str("</"), tag, str(">")], "")
+            cpos := find_from(text, closer, gt + 1)
+            if (cpos >= 0) {
+              ce := cpos + len(closer)
+              nodes ::= nodes + @[Inline.Html(substr(text, i, ce))]
+              i ::= ce
+            } else {
+              nodes ::= nodes + @[Inline.Html(substr(text, i, gt + 1))]
+              i ::= gt + 1
+            }
+          }
+          continue
+        }
+      }
+    }
+
+    // 4. Image: ![alt](src)
+    if (c == "!" and i + 1 < n and char_at(text, i + 1) == "[") {
+      br := find_from(text, "]", i + 2)
+      if (br >= 0 and br + 1 < n and char_at(text, br + 1) == "(") {
+        pr := find_from(text, ")", br + 2)
+        if (pr >= 0) {
+          if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+          alt := substr(text, i + 2, br)
+          src := substr(text, br + 2, pr)
+          nodes ::= nodes + @[Inline.Image(alt, src)]
+          i ::= pr + 1
+          continue
+        }
+      }
+    }
+
+    // 5. Link: [text](url) — bracket text is inline-parsed.
+    if (c == "[") {
+      br := find_from(text, "]", i + 1)
+      if (br >= 0 and br + 1 < n and char_at(text, br + 1) == "(") {
+        pr := find_from(text, ")", br + 2)
+        if (pr >= 0) {
+          if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+          inner := substr(text, i + 1, br)
+          url := substr(text, br + 2, pr)
+          nodes ::= nodes + @[Inline.Link(url, parse_inline(inner))]
+          i ::= pr + 1
+          continue
+        }
+      }
+    }
+
+    // 6. Bold+Italic: ***text***
+    if (i + 3 <= n and substr(text, i, i + 3) == "***") {
+      close := find_from(text, "***", i + 3)
+      if (close >= 0) {
+        if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+        inner := substr(text, i + 3, close)
+        nodes ::= nodes + @[Inline.BoldItalic(parse_inline(inner))]
+        i ::= close + 3
+        continue
+      }
+    }
+
+    // 7. Bold: **text**
+    if (i + 2 <= n and substr(text, i, i + 2) == "**") {
+      close := find_from(text, "**", i + 2)
+      if (close >= 0) {
+        if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+        inner := substr(text, i + 2, close)
+        nodes ::= nodes + @[Inline.Bold(parse_inline(inner))]
+        i ::= close + 2
+        continue
+      }
+    }
+
+    // 8. Italic: *text* or _text_
+    if (c == "*" or c == "_") {
+      close := find_from(text, c, i + 1)
+      if (close >= 0) {
+        if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+        inner := substr(text, i + 1, close)
+        nodes ::= nodes + @[Inline.Italic(parse_inline(inner))]
+        i ::= close + 1
+        continue
+      }
+    }
+
+    // 9. Strikethrough: ~~text~~
+    if (i + 2 <= n and substr(text, i, i + 2) == "~~") {
+      close := find_from(text, "~~", i + 2)
+      if (close >= 0) {
+        if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))]   buf ::= @[] }
+        inner := substr(text, i + 2, close)
+        nodes ::= nodes + @[Inline.Strikethrough(parse_inline(inner))]
+        i ::= close + 2
+        continue
+      }
+    }
+
+    // 10. Plain text: accumulate the character.
+    buf ::= buf + @[c]
+    i ::= i + 1
+  }
+  if (len(buf) > 0) { nodes ::= nodes + @[Inline.Text(join(buf, ""))] }
+  nodes
+}
+
+// Expand raw Inline.Text nodes in a list; other inline nodes pass through.
+expand_inlines := (inlines: @[Inline]) -> @[Inline] {
+  out ::= @[]
+  for node in inlines {
+    match node {
+      Inline.Text(s) -> { for x in parse_inline(s) { out ::= out + @[x] } }
+      _ -> { out ::= out + @[node] }
+    }
+  }
+  out
+}
+
+// Run inline parsing over every list item's blocks.
+process_list_items := (items: @[@[Block]]) -> @[@[Block]] {
+  out ::= @[]
+  for item in items {
+    out ::= out + @[process_inline(item)]
+  }
+  out
+}
+
+// Walk all blocks, expanding inline formatting inside text-bearing nodes.
+process_inline := (blocks: @[Block]) -> @[Block] {
+  out ::= @[]
+  for b in blocks {
+    match b {
+      Block.Heading(level, inls) -> { out ::= out + @[Block.Heading(level, expand_inlines(inls))] }
+      Block.Paragraph(inls) -> { out ::= out + @[Block.Paragraph(expand_inlines(inls))] }
+      Block.Blockquote(inner) -> { out ::= out + @[Block.Blockquote(process_inline(inner))] }
+      Block.UnorderedList(items) -> { out ::= out + @[Block.UnorderedList(process_list_items(items))] }
+      Block.OrderedList(items) -> { out ::= out + @[Block.OrderedList(process_list_items(items))] }
+      _ -> { out ::= out + @[b] }
+    }
+  }
+  out
+}

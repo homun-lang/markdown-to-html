@@ -1,6 +1,7 @@
 FROM rust:latest AS builder
 
 RUN rustup target add wasm32-unknown-unknown
+RUN cargo install wasm-pack
 
 ARG VERSION=dev
 
@@ -18,9 +19,9 @@ RUN ARCH=$(dpkg --print-architecture) && \
     wget -q "https://github.com/homun-lang/homun/releases/latest/download/homunc-linux-${HOMUNC_ARCH}" -O /usr/local/bin/homunc \
     && chmod +x /usr/local/bin/homunc \
     || true
-RUN cargo build --release --lib --target wasm32-unknown-unknown --no-default-features --features wasm
+RUN wasm-pack build --target web --no-default-features --features wasm
 RUN echo "${VERSION}" > /app/version.txt
 
 FROM scratch AS export
-COPY --from=builder /app/target/wasm32-unknown-unknown/release/markdown_to_html.wasm /
+COPY --from=builder /app/pkg/ /
 COPY --from=builder /app/version.txt /
